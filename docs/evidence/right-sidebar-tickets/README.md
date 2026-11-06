@@ -1,7 +1,7 @@
 # Right-sidebar Tickets page — before/after captures
 
 Captured for the pull request that adds the Tickets page to DeepSeek Harness's right sidebar
-(`feat/right-sidebar-tickets`, commit 22d52af, based on `main` a0ea386).
+(`feat/right-sidebar-tickets`, commit 22d52af, compared against `main` a0ea386).
 
 - Viewport: 1440×900, headless Chromium, system theme, same DSH web profile.
 - Scenario: one session open; right sidebar expanded; the guide, then the Tickets tab.
