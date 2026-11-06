@@ -380,3 +380,16 @@ a.dt-btn, a.dt-btn:hover { text-decoration: none; }
 .dt-admission-slot { display: inline-flex; flex: none; width: 16px; }
 .dt-info-warn { color: var(--dsw-alias-state-warn-primary); }
 .dt-field-segmented { max-width: 240px; }
+/* Right-sidebar Tickets page: a narrower column than the panel, so controls and rows tighten up. */
+.dt-rb { box-sizing: border-box; height: 100%; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px 14px 32px; container-type: inline-size; color: var(--dsw-alias-label-primary); }
+.dt-rb-bar { display: flex; align-items: center; gap: 8px; }
+.dt-rb-bar .dt-segmented { flex: 1 1 auto; max-width: none; }
+.dt-rb-list { margin: 0; }
+.dt-rb-row { padding: 8px; }
+.dt-rb-row .dt-row-main { flex-basis: 140px; }
+.dt-rb-title { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; overflow-wrap: anywhere; }
+.dt-rb-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dt-rb-actions .dt-btn { margin: 0; }
+.dt-rb .dt-section { gap: 6px; }
+.dt-rb .dt-danger-zone { padding-top: 12px; }
+.dt-rb .dt-banner-actions .dt-btn { margin: 0; }

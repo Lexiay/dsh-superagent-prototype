@@ -11,14 +11,17 @@ declare global { var IS_REACT_ACT_ENVIRONMENT: boolean }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 type Entry = { options: { name: string; id?: string; key?: string; order?: number; locale?: string; label?: () => string }; component: ComponentType<Record<string, unknown>> }
+type TabType = { id: string; kind: string; title: () => string; guide?: { id: string; title: () => string }[] }
 const t = ((key: keyof typeof zh) => zh[key] ?? key) as never
 function fixture(listed: string[]) {
   const entries: Entry[] = []
   const dictionaries: Record<string, unknown> = {}
+  const tabTypes: TabType[] = []
   const ctx = {
     slots: { inject: (_name: string, register: () => void) => register(), register: (options: Entry['options'], component: Entry['component']) => { entries.push({ options, component }); return () => {} } },
     locale: { register: (ns: string, value: unknown) => { dictionaries[ns] = value; return () => {} }, bind: () => t },
     effect: (effect: () => unknown) => { effect() },
+    sidebarRightTabs: { register: (definition: TabType) => { tabTypes.push(definition); return () => {} } },
     sessions: { list: { getSnapshot: () => ({ phase: 'ready', byId: Object.fromEntries(listed.map(id => [id, {}])) }) }, refresh: vi.fn(async () => {}) },
     uiWorkspace: { openSession: vi.fn() },
     // Omit config form service so Deployment renders read-only.
@@ -26,7 +29,7 @@ function fixture(listed: string[]) {
   }
   apply(ctx as never)
   const entry = (name: string) => entries.find(item => item.options.name === name)!
-  return { ctx, entries, dictionaries, main: entry('main'), nav: entry('sidebar.panellist') }
+  return { ctx, entries, dictionaries, tabTypes, main: entry('main'), nav: entry('sidebar.panellist') }
 }
 async function render(entry: Entry, props: Record<string, unknown>) {
   const container = document.createElement('div'); document.body.append(container)
@@ -45,18 +48,50 @@ const serve = () => vi.stubGlobal('fetch', vi.fn(async (url: string) => {
   if (path === 'overview') return Response.json({ problems: [], person: [], executor: { running: 0, queued: 0, maxWorkers: 3, idle: 0 }, flow: { triggers: 0, filtered: 0, judged: 0, accepted: 0, evaluating: 0 }, policyVersion: 'v' })
   if (path === 'state') return Response.json({ masterId: 'master', settings: SettingsSchema.parse({}), revisions: { policy: 0, eval: 0, executor: 0 }, sources: [], policy_version: 'v', health: {}, outgoing: [], load: { running: 0, queued: 0 },
     setup: { machine: { stateDir: '/srv/state', worktreeRoot: '/srv/state/worktrees', blockedCommands: [], promptMaxChars: 100000, admissionContextMaxPages: 10, admissionContextTimeoutMs: 15000 }, problem: null, feishuProblem: null, accounts: null } })
+  if (path === 'tickets') return Response.json({ items: [{ id: 't1', title: 'Fix login', state: 'open', stage: 'working', actions: { retry: false,
+    stop: true }, strength: 'explicit', assignments: 0, inputs: 0, undelivered: 1, sessionId: '', directory: '/tmp/t1', summary: '',
+    createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', threads: [] }], total: 1, offset: 0, limit: 50 })
+  if (path === 'tickets/t1') return Response.json({ id: 't1', title: 'Fix login', state: 'open', stage: 'person', action: 'review',
+    actions: { retry: true, stop: true }, strength: 'explicit', createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z', mandate: { strength: 'explicit', scope: 'repo:org/proj',
+      actor: { source: 'github', name: { zh: '小明', en: 'Ming' } }, basis: { facts: [], legacy: false } },
+    basis: { facts: [], legacy: false }, inputs: [], undelivered: [], threads: [], channels: [], assignments: [], environment: [],
+    deliveryError: null, paused: false, summary: '', directory: '/tmp/t1', sessionId: '' })
   return Response.json({ error: 'unavailable' }, { status: 503 })
 }))
 afterEach(() => { vi.unstubAllGlobals() })
 
-it('registers a localized main panel, sidebar entry and Plugin Manager row page, and no settings section', () => {
-  const { entries, dictionaries, main, nav } = fixture([])
-  expect(entries.map(entry => entry.options.name)).toEqual(['main', 'sidebar.panellist', 'plugins.row.config'])
-  expect(entries[2]!.options).toMatchObject({ key: 'dsh-superagent#dsh-superagent', locale: 'dshSuperagent' })
+it('registers a localized main panel, sidebar entry, right-sidebar Tickets tab and Plugin Manager row page, and no settings section', () => {
+  const { entries, dictionaries, tabTypes, main, nav } = fixture([])
+  expect(entries.map(entry => entry.options.name)).toEqual(['sidebar.right.pane.tab', 'main', 'sidebar.panellist', 'plugins.row.config'])
+  expect(entries[0]!.options).toMatchObject({ key: 'dsh-superagent/tickets', locale: 'dshSuperagent' })
+  expect(tabTypes).toMatchObject([{ id: 'dsh-superagent/tickets', kind: 'dsh-superagent-tickets',
+    guide: [{ id: 'tickets' }] }])
+  expect(tabTypes[0]!.title()).toBe(zh.ticketsTab)
+  expect(tabTypes[0]!.guide![0]!.title()).toBe(zh.ticketsTab)
+  expect(entries[3]!.options).toMatchObject({ key: 'dsh-superagent#dsh-superagent', locale: 'dshSuperagent' })
   expect(Object.keys(dictionaries)).toEqual(['dshSuperagent'])
   expect(main.options).toMatchObject({ key: 'dsh-superagent', locale: 'dshSuperagent' })
   expect(nav.options).toMatchObject({ id: 'dsh-superagent', order: 10, locale: 'dshSuperagent' })
   expect(nav.options.label?.()).toBe('Superagent')
+})
+
+it('lists open Tickets in the right sidebar and opens one in place', async () => {
+  serve()
+  const { entries } = fixture([])
+  const body = entries.find(item => item.options.name === 'sidebar.right.pane.tab')!
+  const actions = { bindCommands: () => () => {}, openResource: vi.fn(), openTab: vi.fn(), close: vi.fn() }
+  const useTabInfo = () => ({ sidebar: { expanded: true, fullscreen: false }, panel: { id: 'pane' },
+    tab: { id: 'tab', kind: 'dsh-superagent-tickets', visible: true, navigation: { address: 'sidebar://page/x', params: undefined,
+      revision: 0 }, signal: new AbortController().signal, actions } })
+  const view = await render(body, { t, useTabInfo })
+  expect(view.container.textContent).toContain('Fix login')
+  const open = [...view.container.querySelectorAll('button')].find(item => item.textContent === 'Fix login')!
+  await act(async () => { open.click() })
+  for (let i = 0; i < 5; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+  expect(view.container.textContent).toContain(zh.mandateDetails)
+  expect(view.container.textContent).toContain('Fix login')
+  view.dispose()
 })
 
 it('opens a listed Session through the workspace from the main panel', async () => {

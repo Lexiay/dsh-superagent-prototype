@@ -5,9 +5,13 @@ import { USER_ERRORS } from '../core/errors.ts'
 import { SETUP_PROBLEMS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'
 
+/** Locale namespace shared by the management panel and the right-sidebar Tickets page. */
+export const NS = 'dshSuperagent'
+
 const TEXT = {
   // Shared
   title: ['Superagent', 'Superagent'],
+  refresh: ['刷新', 'Refresh'],
   close: ['关闭', 'Close'],
   cancel: ['取消', 'Cancel'],
   confirm: ['确定', 'Confirm'],
@@ -306,6 +310,12 @@ const TEXT = {
   subscribedThreads: ['订阅的线程', 'Subscribed Threads'],
   answerIn: ['去{source}回答', 'Answer in {source}'],
   ticketNotFound: ['找不到这个工单。', 'Ticket not found.'],
+  // Right-sidebar Tickets page
+  ticketsTab: ['工单', 'Tickets'],
+  ticketsTabHint: ['在对话旁查看和处理工单', 'Review and act on Tickets beside the conversation'],
+  ticketsFilter: ['工单筛选', 'Ticket filter'],
+  ticketsEmpty: ['没有{filter}的工单', 'No {filter} Tickets'],
+  ticketsBack: ['工单列表', 'All Tickets'],
   identifiers: ['标识', 'Identifiers'],
   'basis.admission': ['准入', 'Admission'],
   'basis.followup': ['线程内跟进', 'Follow-up in Thread'],

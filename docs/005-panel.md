@@ -23,6 +23,10 @@ The tabs follow the workflow: **Overview**, **Source**, **Trigger**, **Eval**, *
 | Execution | Executor state, Pause processing, and Tickets filtered by Open, Pending, Working, Waiting for a Trigger or Ended. Ticket details show actions, authorization, waiting Inputs, Subscriptions and Assignments |
 | Settings | Sources, Eval, Execution, Prompts and Deployment. Each group includes its save history |
 
+## Right sidebar
+
+DeepSeek Harness's right sidebar offers **Tickets** in its guide, beside Workspace files and the terminal, so a person can check a Ticket without leaving the conversation. It lists open, pending or ended Tickets; one Ticket shows its Mandate, undelivered Inputs, Subscribed Threads, and the Retry, Stop and Open Session actions. Its refresh control uses the standard refresh command.
+
 ### Reading individual records
 
 A dropped message links to its Ticket, or to its Thread when it has no Ticket. The Source page explains whether its conversation disappeared or the Source stopped listening to it.
