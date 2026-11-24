@@ -1,6 +1,7 @@
-/** Loopback-only management HTTP routes with same-origin enforcement for the web panel. */
+/** Management HTTP routes: DSH authenticates every non-loopback request before this handler runs. */
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-host-webserver'
+import type { WebAuthRequest } from '@deepseek-ai/dsh-host-webserver'
+import { isLoopbackHost } from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
 import { THREAD_FILTERS, TICKET_FILTERS, type Api, type ApiResponse, type RouteParams } from './api.ts'
@@ -72,10 +73,23 @@ async function readBody(req: IncomingMessage, maxBytes = 128 * 1024): Promise<un
 function json(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }); res.end(JSON.stringify(value))
 }
-export function sameOrigin(req: Pick<IncomingMessage, 'headers'>, port: number): boolean {
-  const host = req.headers.host
+type HeaderSource = WebAuthRequest['headers']
+/** Read one header from either carrier representation the Web server passes to a route policy. */
+function headerOf(headers: HeaderSource, name: string): string | undefined {
+  if (headers instanceof Headers) return headers.get(name) ?? undefined
+  const value = headers[name]
+  return typeof value === 'string' ? value : Array.isArray(value) ? value[0] : undefined
+}
+/** The panel's marker header plus the exact local authority, used only for a loopback listener's local fast path. */
+export function sameOriginHeaders(headers: HeaderSource, port: number | undefined): boolean {
+  if (port === undefined) return false
+  const host = headerOf(headers, 'host')
   if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`) return false
-  return req.headers['x-orchestrator-request'] === '1' && (req.headers.origin === undefined || req.headers.origin === `http://${host}`)
+  const origin = headerOf(headers, 'origin')
+  return headerOf(headers, 'x-orchestrator-request') === '1' && (origin === undefined || origin === `http://${host}`)
+}
+export function sameOrigin(req: Pick<IncomingMessage, 'headers'>, port: number): boolean {
+  return sameOriginHeaders(req.headers, port)
 }
 /** Maps errors to HTTP status codes and structured payloads that the panel localizes in the interface language. */
 function failure(error: unknown): [number, Record<string, unknown>] {
@@ -228,20 +242,31 @@ function match(table: Routes, method: string, segments: string[]) {
   return undefined
 }
 export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
-  if (ctx.webServer.host !== '127.0.0.1') throw new Error('Orchestrator management requires a loopback Web server')
   const table = routes(runtime)
+  const loopback = isLoopbackHost(ctx.webServer.host)
+  // A loopback listener admits the local service script's marker-only request without a browser cookie. Every other
+  // authority is `required`, so the Web server applies its Host/Origin fence and session-cookie check first.
+  const auth = (request: WebAuthRequest): 'anonymous' | 'required' =>
+    loopback && sameOriginHeaders(request.headers, ctx.webServer.port) ? 'anonymous' : 'required'
   const disposers = [
-    ctx.webServer.register({ kind: 'prefix', path: '/orchestrator', handler: async (req, res) => {
-      const url = new URL(req.url ?? '/', 'http://localhost')
-      if (!url.pathname.startsWith('/orchestrator/api/')) { res.writeHead(404); res.end(); return }
-      if (!sameOrigin(req, ctx.webServer.port)) { json(res, 403, { error: 'Same-origin management request required' }); return }
+    ctx.webServer.register({ kind: 'prefix', path: '/orchestrator', auth, handler: async (req, res, peer) => {
       try {
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        if (!url.pathname.startsWith('/orchestrator/api/')) { res.writeHead(404); res.end(); return }
+        if (headerOf(req.headers, 'x-orchestrator-request') !== '1') {
+          json(res, 403, { error: 'Same-origin management request required' }); return
+        }
+        if (loopback && !sameOriginHeaders(req.headers, ctx.webServer.port)) {
+          json(res, 403, { error: 'Same-origin management request required' }); return
+        }
+        // Non-loopback routes are `required`, so absence of a Peer means the request bypassed DSH admission.
+        if (!loopback && peer === undefined) { json(res, 401, { error: 'Authentication required' }); return }
         await runtime.ready
         const route = match(table, req.method ?? 'GET', url.pathname.slice('/orchestrator/api/'.length).split('/'))
         if (!route) throw new RouteError(404, 'Unknown operation')
         const query = Object.fromEntries(url.searchParams)
         json(res, 200, await route.run({ params: route.params as never, query, body: maxBytes => readBody(req, maxBytes) }))
-      } catch (error) { json(res, ...failure(error)) }
+      } catch (error) { if (!res.headersSent) json(res, ...failure(error)) }
     } })]
   return () => { for (const dispose of disposers) dispose() }
 }

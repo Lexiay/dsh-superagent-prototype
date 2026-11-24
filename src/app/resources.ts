@@ -112,7 +112,10 @@ const THREAD_DECISIONS = 5
 const triggerLine = (trigger: Trigger) => ({ trigger_id: trigger.id, actor: trigger.actor.id, human: trigger.human, at: trigger.at,
   preview: preview(trigger.text), chars: trigger.text.length, read: `trigger/${trigger.id}` })
 async function transcript(host: ResourceHost, ticketId: string) {
-  return (await host.context.sessionController.inspect(workerSessionId(ticketId) as SessionId)).events
+  // Read the worker's stored log through a read handle: the Session may be cold, and the handle never takes write ownership.
+  const handle = await host.context.sessionPersistence.open(workerSessionId(ticketId) as SessionId, 'read')
+  try { return (await handle.read(0)).events }
+  finally { await handle.close() }
 }
 
 const ROUTES: readonly Route[] = [

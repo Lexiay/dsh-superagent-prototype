@@ -233,8 +233,11 @@ export async function startRuntime(seed?: (store: Store) => void) {
     prompt: vi.fn(() => { throw new Error('Plugin delivery must not use user RPC') }),
     inspect: vi.fn(async () => ({ events: [] })),
   }
-  const reader = { read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} }
-  const persistence = { flush: vi.fn(async () => {}), open: vi.fn(async () => reader) }
+  // The transcript route reads a stored log; adapt the fixture's Session inspector so existing per-test mocks still apply.
+  const persistence = { flush: vi.fn(async () => {}), open: vi.fn(async (id: string) => {
+    const inspect = controller.inspect as unknown as (target: string) => Promise<{ events: unknown[] }>
+    return { read: async () => ({ events: (await inspect(id)).events }), close: async () => {}, [Symbol.asyncDispose]: async () => {} }
+  }) }
   const webServer = { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }
   const jobs = jobRegistry(id => agents.get(id))
   const subagents = subagentRuntime(agents)
