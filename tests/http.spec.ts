@@ -1,28 +1,39 @@
 import { expect, it } from 'vitest'
 import { z } from 'zod'
 import { registerHttp } from '../src/app/http.ts'
+import type { WebAuthenticationRule, WebAuthPolicy } from '@deepseek-ai/dsh-host-webserver'
 import { PromptConflict } from '../src/app/prompts.ts'
 import { SettingsConflict } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { SetupError } from '../src/setup.ts'
 
-type Handler = (req: unknown, res: unknown) => Promise<void>
+type Handler = (req: unknown, res: unknown, peer?: unknown) => Promise<void>
 type Headers = Record<string, string | undefined>
+type Call = ((method: string, path: string, body?: unknown, headers?: Headers, peer?: unknown)
+  => Promise<{ status: number, body: Record<string, unknown> }>) & { auth: (headers: Headers) => WebAuthPolicy }
 /** Mount management HTTP routes on a fake web server and return a request helper that includes default panel headers. */
-function serve(runtime: Partial<Record<keyof HttpHost, unknown>>, host = '127.0.0.1') {
+function serve(runtime: Partial<Record<keyof HttpHost, unknown>>, options: { host?: string } = {}): Call {
   let handler: Handler = async () => {}
-  const ctx = { webServer: { host, port: 3082, register: (route: { handler: Handler }) => { handler = route.handler; return () => {} } } }
+  let auth: WebAuthenticationRule | undefined
+  const ctx = {
+    webServer: { host: options.host ?? '127.0.0.1', port: 3082,
+      register: (route: { handler: Handler, auth?: WebAuthenticationRule }) => { handler = route.handler; auth = route.auth; return () => {} } },
+  }
   registerHttp(ctx as never, { ready: Promise.resolve(), ...runtime } as unknown as HttpHost)
-  return async (method: string, path: string, body?: unknown, headers: Headers = {}) => {
+  const call = (async (method: string, path: string, body?: unknown, headers: Headers = {}, peer?: unknown) => {
     let status = 0, text = ''
     const chunks = body === undefined ? [] : [Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]
     const sent = Object.fromEntries(Object.entries({ host: '127.0.0.1:3082', 'x-orchestrator-request': '1', ...headers }).filter(([,
       value]) => value !== undefined))
     const req = { method, url: `/orchestrator/api/${path}`, headers: sent, async *[Symbol.asyncIterator]() { yield* chunks } }
-    await handler(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
+    await handler(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } }, peer)
     return { status, body: JSON.parse(text) as Record<string, unknown> }
-  }
+  }) as Call
+  call.auth = headers => typeof auth === 'function'
+    ? auth({ headers, url: new URL('/orchestrator/api/state', 'http://localhost'), transport: 'http' })
+    : auth ?? 'required'
+  return call
 }
 
 it('answers each kind of failure with its own status', async () => {
@@ -69,6 +80,9 @@ it('decodes path parameters and parses each route\'s query', async () => {
 
 it('answers only a same-origin request from the panel on the loopback address', async () => {
   const call = serve({ sessions: { delivery: async () => 'injected' }, engine: { unsubscribe: () => true } })
+  // The local panel and the service script are admitted anonymously; any other authority must present a DSH Peer.
+  expect(call.auth({ host: '127.0.0.1:3082', 'x-orchestrator-request': '1' })).toBe('anonymous')
+  expect(call.auth({ host: 'evil.example:3082', 'x-orchestrator-request': '1' })).toBe('required')
   const post = (headers: Headers) => call('POST', 'threads/github%3A1/unsubscribe', undefined, headers)
   for (const headers of [{ 'x-orchestrator-request': undefined }, { host: 'evil.example:3082' }, { host: '127.0.0.1:9999' },
     { origin: 'http://evil.example' }, { host: 'localhost:3082', origin: 'http://127.0.0.1:3082' }]) {
@@ -76,8 +90,17 @@ it('answers only a same-origin request from the panel on the loopback address', 
       body: { error: 'Same-origin management request required' } })
   }
   expect(await post({ host: 'localhost:3082', origin: 'http://localhost:3082' })).toMatchObject({ status: 200 })
-  // Management routes require a loopback Web server.
-  expect(() => serve({}, '0.0.0.0')).toThrow('Orchestrator management requires a loopback Web server')
+})
+
+it('mounts on a non-loopback listener and requires an authenticated Peer there', async () => {
+  const call = serve({ sessions: { delivery: async () => 'injected' }, engine: { unsubscribe: () => true } }, { host: '192.168.208.139' })
+  // The route policy defers to DSH's Host/Origin fence and session cookie on a network-bound listener.
+  expect(call.auth({ host: '192.168.208.139:3082', 'x-orchestrator-request': '1' })).toBe('required')
+  expect(await call('POST', 'threads/github%3A1/unsubscribe', undefined, {}, {})).toMatchObject({ status: 200, body: { context_delivery: 'injected' } })
+  // A missing Peer means DSH admission was bypassed; the handler still fails closed.
+  expect(await call('GET', 'state', undefined, {}, undefined)).toEqual({ status: 401, body: { error: 'Authentication required' } })
+  expect(await call('GET', 'state', undefined, { 'x-orchestrator-request': undefined }, {}))
+    .toEqual({ status: 403, body: { error: 'Same-origin management request required' } })
 })
 
 it('answers a prompt save that lost a race with 409, and a settings body over 128 KiB with 400', async () => {
